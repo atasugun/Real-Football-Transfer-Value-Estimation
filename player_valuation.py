@@ -1,26 +1,3 @@
-"""
-Football Player Transfer Value Model  (v3)
-==========================================
-Predicts player market value from player-side attributes,
-then produces a valuation matrix across possible league destinations
-and transfer windows.
-
-v3 adds: prev_goals + prev_assists (previous season) for Attack & Midfield
-         players, sourced from player_stats.csv.
-
-Features used for valuation:
-  nationality, league_from, position, age, transfer_season,
-  contract_year_left, [prev_goals, prev_assists for Attack/Midfield]
-
-Context scenarios:
-  league_to, transfer_window (summer / winter)
-
-Null handling:
-  contract_year_left: imputed with median + binary contract_missing flag
-  prev_goals/prev_assists: NaN for Defenders/Goalkeepers,
-                           NaN (handled natively by XGBoost) if not found
-"""
-
 import numpy as np
 import pandas as pd
 import xgboost as xgb
@@ -41,34 +18,22 @@ DISPLAY_LEAGUES = ["GB1", "ES1", "IT1", "L1", "FR1", "PO1", "NL1", "TR1", "BE1",
 
 ATTACK_MID = {"Attack", "Midfield"}
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. DATA LOADING & FEATURE ENGINEERING
 # ─────────────────────────────────────────────────────────────────────────────
 
 def load_and_prepare(path: str = DATA_PATH, stats_path: str = STATS_PATH):
     df = pd.read_csv(path)
-
     df["transfer_date"] = pd.to_datetime(df["transfer_date"])
-    df["year"]          = df["transfer_date"].dt.year
-
-    # season → numeric start year  (e.g. "23/24" → 2023)
+    df["year"] = df["transfer_date"].dt.year
     df["season_year"] = df["transfer_season"].str[:2].astype(int) + 2000
-
-    # Season before transfer (for stats lookup)
     df["saison"] = df["year"] - 1
-
-    # contract_year_left: missing indicator + impute with median
     df["contract_missing"] = df["contract_year_left"].isnull().astype(int)
     median_contract = df["contract_year_left"].median()
     df["contract_year_left"] = df["contract_year_left"].fillna(median_contract)
-
-    # log-transform market value and target
     df["log_market_value"] = np.log1p(df["market_value_in_eur"])
-    df["log_fee"]          = np.log1p(df["transfer_fee"])
-
-    # Engineered features
-    df["age_sq"]          = df["age"] ** 2
+    df["log_fee"] = np.log1p(df["transfer_fee"])
+    df["age_sq"] = df["age"] ** 2
     df["contract_urgency"] = 1.0 / (df["contract_year_left"] + 0.5)
 
     season_means = df.groupby("season_year")["log_fee"].mean()
@@ -78,18 +43,15 @@ def load_and_prepare(path: str = DATA_PATH, stats_path: str = STATS_PATH):
     c0, c1 = polyfit(years, vals, 1)
     df["season_fee_mean"] = df["season_year"].map(season_means)
 
-    # ── v3: merge goals + assists from player_stats.csv ──────────────────────
     if os.path.exists(stats_path):
         stats = pd.read_csv(stats_path)
         stats = stats.rename(columns={"goals": "prev_goals", "assists": "prev_assists"})
         df = df.merge(stats[["player_id", "saison", "prev_goals", "prev_assists"]],
                       on=["player_id", "saison"], how="left")
-        # Defenders & Goalkeepers: set to NaN (goals/assists not predictive)
         mask_non_atk_mid = ~df["position"].isin(ATTACK_MID)
         df.loc[mask_non_atk_mid, "prev_goals"]   = np.nan
         df.loc[mask_non_atk_mid, "prev_assists"] = np.nan
 
-        # Combined goals+assists (only when at least one is available)
         df["goals_assists"] = df["prev_goals"].fillna(0) + df["prev_assists"].fillna(0)
         has_stats = df["prev_goals"].notna() | df["prev_assists"].notna()
         df.loc[~has_stats, "goals_assists"] = np.nan
@@ -148,10 +110,8 @@ def get_feature_cols(df_encoded: pd.DataFrame) -> list:
         "age", "age_sq",
         "contract_year_left", "contract_urgency", "contract_missing",
         "is_summer",
-        # v3: performance features (NaN for Defenders/Goalkeepers)
         "prev_goals", "prev_assists", "log_goals_assists",
     ] + pos_cols
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 2. TRAINING
@@ -188,7 +148,6 @@ def train_model(X_train: pd.DataFrame, y_train: pd.Series,
     print()
 
     return model
-
 
 
 def train_lgb_model(X_train: pd.DataFrame, y_train: pd.Series,
@@ -230,8 +189,8 @@ def train_lgb_model(X_train: pd.DataFrame, y_train: pd.Series,
 # MV_ALPHA=0.55: meaningful correction for elite players at a small R² cost.
 # Example: €200M MV → (200/80)^0.55 ≈ 1.65 × base prediction (~€132M)
 
-MV_SATURATION = 80_000_000   # EUR — top of the well-sampled training range
-MV_ALPHA      = 0.55         # dampening exponent
+MV_SATURATION = 80_000_000   
+MV_ALPHA      = 0.55         
 
 
 def _apply_mv_multiplier(raw_fee: float, market_value_in_eur: float) -> float:
