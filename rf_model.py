@@ -5,7 +5,7 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_absolute_error, r2_score, median_absolute_error
-from player_valuation import (
+from deployment.player_valuation import (
     load_and_prepare, build_target_encodings,
     encode_features, get_feature_cols, train_model
 )

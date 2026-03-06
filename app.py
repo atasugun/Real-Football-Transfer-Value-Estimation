@@ -5,6 +5,7 @@ Serves the Transfer Value Estimator UI backed by the XGBoost valuation model.
 
 import os
 import re
+import gc
 import sys
 import json
 import time
@@ -16,7 +17,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from player_valuation import PlayerValuator, DISPLAY_LEAGUES, DATA_PATH, MODEL_PATH
+from deployment.player_valuation import PlayerValuator, DISPLAY_LEAGUES, DATA_PATH, MODEL_PATH
 from scrape_player import fetch_player_live
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
@@ -203,10 +204,16 @@ def build_players_index(val: PlayerValuator, df: pd.DataFrame) -> dict:
 
 # ── Transfermarkt URL lookup (player_id -> tm_url) ────────────────────────────
 _tm_url_map: dict = {}
-if os.path.exists(PLAYERS_CSV):
+_tm_urls_json = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tm_urls.json")
+if os.path.exists(_tm_urls_json):
+    with open(_tm_urls_json, "r", encoding="utf-8") as _f:
+        _tm_url_map = {int(k): v for k, v in json.load(_f).items()}
+    print(f"Loaded {len(_tm_url_map):,} Transfermarkt URLs from tm_urls.json")
+elif os.path.exists(PLAYERS_CSV):
     _pcsv = pd.read_csv(PLAYERS_CSV, usecols=["player_id", "url"], low_memory=False)
     _pcsv = _pcsv.dropna(subset=["url"])
     _tm_url_map = dict(zip(_pcsv["player_id"].astype(int), _pcsv["url"].astype(str)))
+    del _pcsv
     print(f"Loaded {len(_tm_url_map):,} Transfermarkt URLs from players.csv")
 
 # ── Load model ────────────────────────────────────────────────────────────────
@@ -247,6 +254,8 @@ else:
 
 # ── Vectorised batch prediction for all players ───────────────────────────────
 players_index = build_players_index(valuator, players_df)
+del players_df
+gc.collect()
 
 # ── Flat list used by /api/search and /api/players ────────────────────────────
 _players_list = []

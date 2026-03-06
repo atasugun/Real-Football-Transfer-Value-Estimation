@@ -6,7 +6,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVR
 from sklearn.metrics import mean_absolute_error, r2_score, median_absolute_error
-from player_valuation import (
+from deployment.player_valuation import (
     PlayerValuator, load_and_prepare, build_target_encodings,
     encode_features, get_feature_cols, train_model, MODEL_PATH
 )

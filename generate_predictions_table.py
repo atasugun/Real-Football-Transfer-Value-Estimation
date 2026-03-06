@@ -7,7 +7,7 @@ a colour-coded HTML table: predictions_table.html
 
 import numpy as np
 import pandas as pd
-from player_valuation import (
+from deployment.player_valuation import (
     load_and_prepare, build_target_encodings, encode_features,
     get_feature_cols, _apply_mv_multiplier, PlayerValuator,
     DATA_PATH, STATS_PATH
