@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(mkdir -p data scripts)",
-      "Bash(mv transfers.csv player_stats.csv players.csv player_valuations.csv players_live.json tm_urls.json valuation_model.pkl data/)",
-      "Bash(mv build_live_players.py update_player_status.py scripts/)"
-    ]
-  }
-}
