@@ -254,8 +254,6 @@ else:
 
 # ── Vectorised batch prediction for all players ───────────────────────────────
 players_index = build_players_index(valuator, players_df)
-del players_df
-gc.collect()
 
 # ── Flat list used by /api/search and /api/players ────────────────────────────
 _players_list = []
@@ -299,6 +297,8 @@ for _, row in players_df.iterrows():
         "best_window":        idx.get("best_window", ""),
     })
 
+del players_df
+gc.collect()
 print(f"Ready -- {len(_players_list):,} players indexed ({data_source} data).")
 
 
