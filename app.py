@@ -57,8 +57,8 @@ LEAGUE_META = {
     "JAP1":{"name": "J1 League",        "country": "Japan",       "flag": "🇯🇵",        "iso": "jp"},
 }
 
-LIVE_DATA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "players_live.json")
-PLAYERS_CSV    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "players.csv")
+LIVE_DATA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "players_live.json")
+PLAYERS_CSV    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "players.csv")
 
 
 # Characters that don't decompose via NFD but have obvious ASCII equivalents
@@ -115,7 +115,7 @@ def format_fee(fee: int) -> str:
 
 # ── Transfermarkt URL lookup (player_id -> tm_url) ────────────────────────────
 _tm_url_map: dict = {}
-_tm_urls_json = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tm_urls.json")
+_tm_urls_json = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "tm_urls.json")
 if os.path.exists(_tm_urls_json):
     with open(_tm_urls_json, "r", encoding="utf-8") as _f:
         _tm_url_map = {int(k): v for k, v in json.load(_f).items()}

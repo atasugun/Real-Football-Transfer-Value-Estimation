@@ -33,9 +33,9 @@ import os
 
 warnings.filterwarnings("ignore")
 
-DATA_PATH  = os.path.join(os.path.dirname(__file__), "transfers.csv")
-STATS_PATH = os.path.join(os.path.dirname(__file__), "player_stats.csv")
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "valuation_model.pkl")
+DATA_PATH  = os.path.join(os.path.dirname(__file__), "data", "transfers.csv")
+STATS_PATH = os.path.join(os.path.dirname(__file__), "data", "player_stats.csv")
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "data", "valuation_model.pkl")
 
 DISPLAY_LEAGUES = ["GB1", "ES1", "IT1", "L1", "FR1", "PO1", "NL1", "TR1", "BE1", "RU1"]
 

@@ -21,7 +21,7 @@ import pandas as pd
 from bs4 import BeautifulSoup
 from pathlib import Path
 
-PLAYERS_CSV = Path(__file__).parent / "players.csv"
+PLAYERS_CSV = Path(__file__).parent.parent / "data" / "players.csv"
 DELAY       = 1.2   # seconds between requests (be polite)
 TIMEOUT     = 12
 

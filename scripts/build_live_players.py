@@ -24,8 +24,8 @@ from pathlib import Path
 from datetime import datetime
 
 # ── Defaults (edit if your archive lives elsewhere) ───────────────────────────
-DEFAULT_ARCHIVE = Path(__file__).parent   # CSVs live alongside this script
-OUTPUT_PATH     = Path(__file__).parent / "players_live.json"
+DEFAULT_ARCHIVE = Path(__file__).parent.parent / "data"
+OUTPUT_PATH     = Path(__file__).parent.parent / "data" / "players_live.json"
 
 CURRENT_SEASON  = "25/26"
 TODAY           = datetime.now()
