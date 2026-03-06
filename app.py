@@ -17,7 +17,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from deployment.player_valuation import PlayerValuator, DISPLAY_LEAGUES, DATA_PATH, MODEL_PATH
+from player_valuation import PlayerValuator, DISPLAY_LEAGUES, DATA_PATH, MODEL_PATH
 from scrape_player import fetch_player_live
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
