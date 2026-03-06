@@ -24,6 +24,7 @@ Null handling:
 import numpy as np
 import pandas as pd
 import xgboost as xgb
+import lightgbm as lgb
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error, r2_score
 import warnings
@@ -189,6 +190,34 @@ def train_model(X_train: pd.DataFrame, y_train: pd.Series,
     return model
 
 
+
+def train_lgb_model(X_train: pd.DataFrame, y_train: pd.Series,
+                    feature_cols: list, label: str = ""):
+    X_tr, X_val, y_tr, y_val = train_test_split(
+        X_train, y_train, test_size=0.12, random_state=0
+    )
+    model = lgb.LGBMRegressor(
+        n_estimators=3000,
+        learning_rate=0.02,
+        num_leaves=63,
+        min_child_samples=20,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        reg_alpha=0.1,
+        reg_lambda=0.1,
+        random_state=42,
+        n_jobs=-1,
+        verbose=-1,
+    )
+    model.fit(
+        X_tr, y_tr,
+        eval_set=[(X_val, y_val)],
+        callbacks=[lgb.early_stopping(100, verbose=False), lgb.log_evaluation(period=-1)],
+    )
+    tag = f" [{label}]" if label else ""
+    print(f"  LGB best n_estimators{tag}: {model.best_iteration_}")
+    return model
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 3. POST-PROCESSING MULTIPLIER
 # ─────────────────────────────────────────────────────────────────────────────
@@ -228,8 +257,10 @@ class PlayerValuator:
     def __init__(self, model, encodings: dict, feature_cols: list,
                  median_contract: float, all_positions: list,
                  season_means: dict, season_trend: tuple,
-                 stats_lookup: dict = None):
+                 stats_lookup: dict = None,
+                 lgb_model=None):
         self.model           = model
+        self.lgb_model       = lgb_model
         self.encodings       = encodings
         self.feature_cols    = feature_cols
         self.median_contract = median_contract
@@ -334,6 +365,8 @@ class PlayerValuator:
 
         X = pd.DataFrame(rows)[self.feature_cols]
         log_preds = self.model.predict(X)
+        if self.lgb_model is not None:
+            log_preds = (log_preds + self.lgb_model.predict(X)) / 2
         preds = np.expm1(log_preds)
         preds = np.array([_apply_mv_multiplier(p, market_value_in_eur) for p in preds])
 
@@ -364,7 +397,10 @@ class PlayerValuator:
             prev_goals, prev_assists,
         )
         X = pd.DataFrame([row])[self.feature_cols]
-        raw = float(np.expm1(self.model.predict(X)[0]))
+        log_pred = self.model.predict(X)[0]
+        if self.lgb_model is not None:
+            log_pred = (log_pred + self.lgb_model.predict(X)[0]) / 2
+        raw = float(np.expm1(log_pred))
         return _apply_mv_multiplier(raw, market_value_in_eur)
 
     def save(self, path: str = MODEL_PATH):
@@ -387,6 +423,8 @@ class PlayerValuator:
         # backward compat: old pkl may not have stats_lookup
         if not hasattr(obj, "stats_lookup"):
             obj.stats_lookup = {}
+        if not hasattr(obj, "lgb_model"):
+            obj.lgb_model = None
         print(f"Model loaded from {path}")
         return obj
 
@@ -406,11 +444,13 @@ class PlayerValuator:
 
         df_train, df_test = train_test_split(df_enc, test_size=0.15, random_state=42)
 
-        print("Training XGBoost model (v3)...")
+        print("Training XGBoost model...")
         model = train_model(df_train[feature_cols], df_train["log_fee"], feature_cols)
+        print("Training LightGBM model...")
+        lgb_model = train_lgb_model(df_train[feature_cols], df_train["log_fee"], feature_cols)
 
-        # Evaluate
-        log_preds  = model.predict(df_test[feature_cols])
+        # Evaluate ensemble
+        log_preds  = (model.predict(df_test[feature_cols]) + lgb_model.predict(df_test[feature_cols])) / 2
         y_test_log = df_test["log_fee"].values
         y_test     = np.expm1(y_test_log)
         y_pred     = np.expm1(log_preds)
@@ -442,7 +482,7 @@ class PlayerValuator:
 
         valuator = cls(model, encodings, feature_cols, median_contract,
                        all_positions, season_means.to_dict(), season_trend,
-                       stats_lookup)
+                       stats_lookup, lgb_model)
         return valuator
 
 
