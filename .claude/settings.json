@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(timeout 20 python -c \":*)",
+      "Bash(python -c \":*)",
+      "Bash(python -c \"import bs4; print\\(''bs4 ok:'', bs4.__version__\\)\")",
+      "Bash(timeout 30 python -c \":*)"
+    ]
+  }
+}
