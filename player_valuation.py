@@ -1,26 +1,3 @@
-"""
-Football Player Transfer Value Model  (v3)
-==========================================
-Predicts player market value from player-side attributes,
-then produces a valuation matrix across possible league destinations
-and transfer windows.
-
-v3 adds: prev_goals + prev_assists (previous season) for Attack & Midfield
-         players, sourced from player_stats.csv.
-
-Features used for valuation:
-  nationality, league_from, position, age, transfer_season,
-  contract_year_left, [prev_goals, prev_assists for Attack/Midfield]
-
-Context scenarios:
-  league_to, transfer_window (summer / winter)
-
-Null handling:
-  contract_year_left: imputed with median + binary contract_missing flag
-  prev_goals/prev_assists: NaN for Defenders/Goalkeepers,
-                           NaN (handled natively by XGBoost) if not found
-"""
-
 import numpy as np
 import pandas as pd
 import xgboost as xgb
@@ -41,34 +18,22 @@ DISPLAY_LEAGUES = ["GB1", "ES1", "IT1", "L1", "FR1", "PO1", "NL1", "TR1", "BE1",
 
 ATTACK_MID = {"Attack", "Midfield"}
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. DATA LOADING & FEATURE ENGINEERING
 # ─────────────────────────────────────────────────────────────────────────────
 
 def load_and_prepare(path: str = DATA_PATH, stats_path: str = STATS_PATH):
     df = pd.read_csv(path)
-
     df["transfer_date"] = pd.to_datetime(df["transfer_date"])
-    df["year"]          = df["transfer_date"].dt.year
-
-    # season → numeric start year  (e.g. "23/24" → 2023)
+    df["year"] = df["transfer_date"].dt.year
     df["season_year"] = df["transfer_season"].str[:2].astype(int) + 2000
-
-    # Season before transfer (for stats lookup)
     df["saison"] = df["year"] - 1
-
-    # contract_year_left: missing indicator + impute with median
     df["contract_missing"] = df["contract_year_left"].isnull().astype(int)
     median_contract = df["contract_year_left"].median()
     df["contract_year_left"] = df["contract_year_left"].fillna(median_contract)
-
-    # log-transform market value and target
     df["log_market_value"] = np.log1p(df["market_value_in_eur"])
-    df["log_fee"]          = np.log1p(df["transfer_fee"])
-
-    # Engineered features
-    df["age_sq"]          = df["age"] ** 2
+    df["log_fee"] = np.log1p(df["transfer_fee"])
+    df["age_sq"] = df["age"] ** 2
     df["contract_urgency"] = 1.0 / (df["contract_year_left"] + 0.5)
 
     season_means = df.groupby("season_year")["log_fee"].mean()
@@ -78,18 +43,15 @@ def load_and_prepare(path: str = DATA_PATH, stats_path: str = STATS_PATH):
     c0, c1 = polyfit(years, vals, 1)
     df["season_fee_mean"] = df["season_year"].map(season_means)
 
-    # ── v3: merge goals + assists from player_stats.csv ──────────────────────
     if os.path.exists(stats_path):
         stats = pd.read_csv(stats_path)
         stats = stats.rename(columns={"goals": "prev_goals", "assists": "prev_assists"})
         df = df.merge(stats[["player_id", "saison", "prev_goals", "prev_assists"]],
                       on=["player_id", "saison"], how="left")
-        # Defenders & Goalkeepers: set to NaN (goals/assists not predictive)
         mask_non_atk_mid = ~df["position"].isin(ATTACK_MID)
         df.loc[mask_non_atk_mid, "prev_goals"]   = np.nan
         df.loc[mask_non_atk_mid, "prev_assists"] = np.nan
 
-        # Combined goals+assists (only when at least one is available)
         df["goals_assists"] = df["prev_goals"].fillna(0) + df["prev_assists"].fillna(0)
         has_stats = df["prev_goals"].notna() | df["prev_assists"].notna()
         df.loc[~has_stats, "goals_assists"] = np.nan
@@ -148,10 +110,8 @@ def get_feature_cols(df_encoded: pd.DataFrame) -> list:
         "age", "age_sq",
         "contract_year_left", "contract_urgency", "contract_missing",
         "is_summer",
-        # v3: performance features (NaN for Defenders/Goalkeepers)
         "prev_goals", "prev_assists", "log_goals_assists",
     ] + pos_cols
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 2. TRAINING
@@ -190,7 +150,6 @@ def train_model(X_train: pd.DataFrame, y_train: pd.Series,
     return model
 
 
-
 def train_lgb_model(X_train: pd.DataFrame, y_train: pd.Series,
                     feature_cols: list, label: str = ""):
     X_tr, X_val, y_tr, y_val = train_test_split(
@@ -221,17 +180,9 @@ def train_lgb_model(X_train: pd.DataFrame, y_train: pd.Series,
 # ─────────────────────────────────────────────────────────────────────────────
 # 3. POST-PROCESSING MULTIPLIER
 # ─────────────────────────────────────────────────────────────────────────────
-# XGBoost trees saturate at the high end of market value because training data
-# is sparse above ~€80M.  For players above this threshold we apply a dampened
-# power-law multiplier so the prediction scales with the actual market value.
-#
-#   multiplier = (market_value / MV_SATURATION) ^ MV_ALPHA
-#
-# MV_ALPHA=0.55: meaningful correction for elite players at a small R² cost.
-# Example: €200M MV → (200/80)^0.55 ≈ 1.65 × base prediction (~€132M)
 
-MV_SATURATION = 80_000_000   # EUR — top of the well-sampled training range
-MV_ALPHA      = 0.55         # dampening exponent
+MV_SATURATION = 80_000_000   
+MV_ALPHA      = 0.55         
 
 
 def _apply_mv_multiplier(raw_fee: float, market_value_in_eur: float) -> float:
@@ -247,12 +198,6 @@ def _apply_mv_multiplier(raw_fee: float, market_value_in_eur: float) -> float:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class PlayerValuator:
-    """
-    Wraps the trained model + encodings to produce valuations.
-
-    v3 supports optional prev_goals / prev_assists for Attack & Midfield
-    players. Pass None (or omit) if unavailable — XGBoost handles NaN natively.
-    """
 
     def __init__(self, model, encodings: dict, feature_cols: list,
                  median_contract: float, all_positions: list,
@@ -267,7 +212,6 @@ class PlayerValuator:
         self.all_positions   = all_positions
         self.season_means    = season_means
         self.season_trend    = season_trend
-        # stats_lookup: {(player_id, saison): (goals, assists)}
         self.stats_lookup    = stats_lookup or {}
 
     def _season_fee_mean(self, season_year: int) -> float:
@@ -286,7 +230,7 @@ class PlayerValuator:
         entry = self.stats_lookup.get(key)
         if entry is None:
             return None, None
-        return entry  # (goals, assists)
+        return entry
 
     def _make_row(self, nationality, league_from, position, age,
                   season_year, contract_year_left, contract_missing,
@@ -297,7 +241,6 @@ class PlayerValuator:
         lf_enc  = self.encodings["league_from"].get(league_from,  self.encodings["league_from_default"])
         lt_enc  = self.encodings["league_to"].get(league_to,      self.encodings["league_to_default"])
 
-        # Goals/assists only for Attack & Midfield
         if position in ATTACK_MID:
             g = float(prev_goals)   if prev_goals   is not None and not (isinstance(prev_goals,   float) and np.isnan(prev_goals))   else np.nan
             a = float(prev_assists) if prev_assists  is not None and not (isinstance(prev_assists, float) and np.isnan(prev_assists)) else np.nan
@@ -420,7 +363,6 @@ class PlayerValuator:
 
         with open(path, "rb") as f:
             obj = _Remapper(f).load()
-        # backward compat: old pkl may not have stats_lookup
         if not hasattr(obj, "stats_lookup"):
             obj.stats_lookup = {}
         if not hasattr(obj, "lgb_model"):
@@ -449,7 +391,6 @@ class PlayerValuator:
         print("Training LightGBM model...")
         lgb_model = train_lgb_model(df_train[feature_cols], df_train["log_fee"], feature_cols)
 
-        # Evaluate ensemble
         log_preds  = (model.predict(df_test[feature_cols]) + lgb_model.predict(df_test[feature_cols])) / 2
         y_test_log = df_test["log_fee"].values
         y_test     = np.expm1(y_test_log)
@@ -470,7 +411,6 @@ class PlayerValuator:
         print(f"  R2  (EUR):           {r2:.4f}")
         print(f"{SEP}\n")
 
-        # Build stats lookup for inference: {(player_id, saison): (goals, assists)}
         stats_lookup = {}
         if os.path.exists(stats_path):
             stats = pd.read_csv(stats_path)
@@ -484,7 +424,6 @@ class PlayerValuator:
                        all_positions, season_means.to_dict(), season_trend,
                        stats_lookup, lgb_model)
         return valuator
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 4. MAIN
