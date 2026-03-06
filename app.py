@@ -57,7 +57,6 @@ LEAGUE_META = {
     "JAP1":{"name": "J1 League",        "country": "Japan",       "flag": "🇯🇵",        "iso": "jp"},
 }
 
-N_PER_PLAYER   = len(DISPLAY_LEAGUES) * 2   # 10 leagues × 2 windows = 20
 LIVE_DATA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "players_live.json")
 PLAYERS_CSV    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "players.csv")
 
@@ -112,94 +111,6 @@ def format_fee(fee: int) -> str:
     return f"€{fee:,}"
 
 
-# ── Batch pre-computation ──────────────────────────────────────────────────────
-
-def build_players_index(val: PlayerValuator, df: pd.DataFrame) -> dict:
-    """
-    Vectorised: build one giant feature matrix covering every
-    (player × league_to × window) combination, run a single
-    model.predict(), then reshape into a per-player dict.
-
-    Returns  {player_name: {
-                "max_value":   int,
-                "best_league": str,
-                "best_window": str,
-                "summer":      {league: int, ...},
-                "winter":      {league: int, ...},
-              }, ...}
-    """
-    t0 = time.time()
-
-    # Keep only rows we can fully score
-    required = ["player_name", "nationality", "position", "league_from",
-                "age", "market_value_in_eur", "transfer_season"]
-    valid = df.dropna(subset=required).copy()
-    valid = valid[valid["market_value_in_eur"] > 0]
-    valid = valid[valid["position"].isin(val.all_positions)]
-
-    n = len(valid)
-    print(f"Pre-computing valuations for {n} players × {N_PER_PLAYER} scenarios "
-          f"= {n * N_PER_PLAYER:,} predictions...")
-
-    # Build the full matrix in one go
-    all_rows  = []
-    player_names = []   # length = n * N_PER_PLAYER
-
-    for _, p in valid.iterrows():
-        season_year = int(str(p["transfer_season"])[:2]) + 2000
-        log_mv      = np.log1p(p["market_value_in_eur"])
-        cyl_raw     = p.get("contract_year_left")
-        if pd.notna(cyl_raw):
-            cyl, cm = float(cyl_raw), 0
-        else:
-            cyl, cm = val.median_contract, 1
-
-        # v3: look up goals/assists for Attack/Midfield players
-        player_id = p.get("player_id")
-        prev_goals, prev_assists = val.get_player_stats(player_id, season_year)
-
-        for lg in DISPLAY_LEAGUES:
-            for _, is_summer in [("summer", 1), ("winter", 0)]:
-                all_rows.append(val._make_row(
-                    p["nationality"], p["league_from"], p["position"],
-                    p["age"], season_year, cyl, cm,
-                    lg, is_summer, log_mv,
-                    prev_goals, prev_assists,
-                ))
-                player_names.append(p["player_name"])
-
-    X        = pd.DataFrame(all_rows)[val.feature_cols]
-    log_pred = val.model.predict(X)
-    preds    = np.expm1(log_pred).astype(int)
-
-    # Reshape into per-player dict
-    windows  = ["summer", "winter"]
-    index    = {}
-
-    for i, (name, row_data) in enumerate(zip(player_names, all_rows)):
-        lg     = DISPLAY_LEAGUES[(i // 2) % len(DISPLAY_LEAGUES)]
-        window = windows[i % 2]
-        val_i  = int(preds[i])
-
-        if name not in index:
-            index[name] = {"summer": {}, "winter": {}}
-        index[name][window][lg] = val_i
-
-    # Compute per-player summary
-    for name, data in index.items():
-        all_vals = list(data["summer"].values()) + list(data["winter"].values())
-        best_val = max(all_vals)
-        data["max_value"] = best_val
-        for w in ("summer", "winter"):
-            for lg, v in data[w].items():
-                if v == best_val:
-                    data["best_league"] = lg
-                    data["best_window"] = w
-                    break
-
-    elapsed = time.time() - t0
-    print(f"Done -- {len(index)} players valued in {elapsed:.1f}s")
-    return index
 
 
 # ── Transfermarkt URL lookup (player_id -> tm_url) ────────────────────────────
@@ -252,20 +163,11 @@ else:
     ALL_NATIONALITIES = sorted(_df_hist["nationality"].dropna().unique().tolist())
     ALL_LEAGUES       = sorted(_df_hist["league_from"].dropna().unique().tolist())
 
-# ── Vectorised batch prediction for all players ───────────────────────────────
-players_index = build_players_index(valuator, players_df)
-
-# ── Flat list used by /api/search and /api/players ────────────────────────────
+# ── Flat list used by /api/search ────────────────────────────────────────────
 _players_list = []
 for _, row in players_df.iterrows():
     name = row["player_name"]
-    if name not in players_index:
-        continue
-    idx       = players_index[name]
-    best_meta = LEAGUE_META.get(idx.get("best_league", ""), {})
-
     cyl = row.get("contract_year_left")
-    # v3: look up this player's goals/assists for the stats tooltip
     pid = row.get("player_id")
     season_year = int(str(row.get("transfer_season", SEASONS[0]))[:2]) + 2000
     pg, pa = valuator.get_player_stats(pid, season_year)
@@ -285,16 +187,8 @@ for _, row in players_df.iterrows():
         "image_url":          str(row.get("image_url", "")),
         "val_date":           str(row.get("val_date", "")) if pd.notna(row.get("val_date")) else "",
         "tm_url":             _tm_url_map.get(int(pid) if pd.notna(pid) else -1, ""),
-        # v3: performance stats (None if not available)
         "prev_goals":         pg,
         "prev_assists":       pa,
-        # pre-computed predictions
-        "max_predicted":      idx["max_value"],
-        "max_predicted_fmt":  format_fee(idx["max_value"]),
-        "best_league":        idx.get("best_league", ""),
-        "best_league_name":   best_meta.get("name", idx.get("best_league", "")),
-        "best_league_flag":   best_meta.get("flag", ""),
-        "best_window":        idx.get("best_window", ""),
     })
 
 del players_df
